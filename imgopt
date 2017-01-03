@@ -33,7 +33,6 @@ ext_format = {
 
 threads = cfg_defaults["threads"]
 thread_sem = threading.BoundedSemaphore(threads)
-children = list()
 
 def prepare_logfile(logname):
     if logname == "stdout":
@@ -69,12 +68,9 @@ def process_image_threaded(img_file, callback):
     thread_sem.release()
 
 def process_image(*args):
-    global children
-    children = [ child for child in children if child.is_alive() ]
     thread_sem.acquire()
     t = threading.Thread(target = process_image_threaded, args = args)
     t.start()
-    children.append(t)
 
 def optimize_imagedir(path):
     results = {
@@ -82,11 +78,13 @@ def optimize_imagedir(path):
         "newsize": 0,
         "count":   0,
     }
+    reslock = threading.Lock()
     log.info("Processing directory \"%s\"...", path)
     def cb(before, after):
-        results["oldsize"] += before
-        results["newsize"] += after
-        results["count"] += 1
+        with reslock:
+            results["oldsize"] += before
+            results["newsize"] += after
+            results["count"] += 1
     for dp, dn, fn in os.walk(path):
         for filename in fn:
             if os.path.splitext(filename)[1][1:].lower() in ext_format:
@@ -137,6 +135,7 @@ def main():
             "newsize": newsize,
         }
 
+    log.info("Finished")
     json.dump(report, sys.stdout)
 
 if __name__ == '__main__':
