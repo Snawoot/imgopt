@@ -6,14 +6,27 @@ import os
 import os.path
 import subprocess
 import logging
+import json
 
 GLOBAL = "global"
 app_root = os.path.dirname(os.path.realpath(__file__))
 cfg_defaults = {
-    "jpegoptim": "/usr/bin/jpegoptim",
-    "optipng": "/usr/bin/optipng",
-    "log": "stdout",
+    "jpegoptim" :   "/usr/bin/jpegoptim",
+    "optipng"   :   "/usr/bin/optipng",
+    "log"       :   "stderr",
+    "threads"   :   8,
 }
+
+ext_format = {
+    "jpg"   :   "jpeg",
+    "jpeg"  :   "jpeg",
+    "jpe"   :   "jpeg",
+    "jfif"  :   "jpeg",
+    "jif"   :   "jpeg",
+    "png"   :   "png",
+}
+
+threads = cfg_defaults["threads"]
 
 def prepare_logfile(logname):
     if logname == "stdout":
@@ -31,11 +44,25 @@ def setup_logger(logfile):
     logger.addHandler(log_handler)
     return logger
 
+def process_image(img_file):
+    log.debug("Processing %s", repr(img_file))
+    return 0, 0
+
 def optimize_imagedir(path):
-    oldsize, newsize = 0, 0
-    return oldsize, newsize
+    oldsize, newsize, count = 0, 0, 0
+    log.info("Processing directory \"%s\"...", path)
+    for dp, dn, fn in os.walk(path):
+        for filename in fn:
+            if os.path.splitext(filename)[1][1:].lower() in ext_format:
+                size_before, size_after = process_image(os.path.join(dp, filename))
+                oldsize += size_before
+                newsize += size_after
+                count += 1
+    return oldsize, newsize, count
 
 def main():
+    global log
+    global threads
     cfgpath = os.path.join(app_root, "imgopt.ini")
 
     config = ConfigParser.RawConfigParser(cfg_defaults)
@@ -45,6 +72,7 @@ def main():
 
     log = setup_logger(prepare_logfile(config.get(GLOBAL, "log")))
     log.info("Starting")
+    threads = config.getint(GLOBAL, "threads")
 
     report = dict()
     for sect in sections:
@@ -57,7 +85,15 @@ def main():
         if not os.path.isdir(path):
             log.warn("Config section \"%s\": \"path\" value %s doesn`t points to a directory! Skipping...", sect, repr(path))
             continue
-        oldsize, newsize = optimize_imagedir(path)
+        oldsize, newsize, count = optimize_imagedir(path)
+        report[sect] = {
+            "path": path,
+            "count": count,
+            "oldsize": oldsize,
+            "newsize": newsize,
+        }
+
+    json.dump(report, sys.stdout)
 
 if __name__ == '__main__':
     main()
