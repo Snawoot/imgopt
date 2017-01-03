@@ -1,0 +1,63 @@
+#!/usr/bin/env python
+
+import sys
+import ConfigParser
+import os
+import os.path
+import subprocess
+import logging
+
+GLOBAL = "global"
+app_root = os.path.dirname(os.path.realpath(__file__))
+cfg_defaults = {
+    "jpegoptim": "/usr/bin/jpegoptim",
+    "optipng": "/usr/bin/optipng",
+    "log": "stdout",
+}
+
+def prepare_logfile(logname):
+    if logname == "stdout":
+        return sys.stdout
+    elif logname == "stderr":
+        return sys.stderr
+    else:
+        return open(logname, "a")
+
+def setup_logger(logfile):
+    logger = logging.getLogger("imgopt")
+    logger.setLevel(logging.INFO)
+    log_handler = logging.StreamHandler(logfile)
+    log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(log_handler)
+    return logger
+
+def optimize_imagedir(path):
+    oldsize, newsize = 0, 0
+    return oldsize, newsize
+
+def main():
+    cfgpath = os.path.join(app_root, "imgopt.ini")
+
+    config = ConfigParser.RawConfigParser(cfg_defaults)
+    configs = config.read(cfgpath)
+    assert configs, "No config files read"
+    sections = [ s for s in config.sections() if s != GLOBAL ]
+
+    log = setup_logger(prepare_logfile(config.get(GLOBAL, "log")))
+    log.info("Starting")
+
+    report = dict()
+    for sect in sections:
+        try:
+            path = config.get(sect, "path")
+        except ConfigParser.NoOptionError:
+            log.warn("Config section \"%s\" has no \"path\" value specified! Skipping...", sect)
+            continue
+
+        if not os.path.isdir(path):
+            log.warn("Config section \"%s\": \"path\" value %s doesn`t points to a directory! Skipping...", sect, repr(path))
+            continue
+        oldsize, newsize = optimize_imagedir(path)
+
+if __name__ == '__main__':
+    main()
