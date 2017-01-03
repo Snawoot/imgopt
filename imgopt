@@ -9,30 +9,28 @@ import subprocess
 import logging
 import hashlib
 import json
-import sqlite3 as lite
 
 GLOBAL = "global"
-BUFFSIZE = 8 * 2**20
 app_root = os.path.dirname(os.path.realpath(__file__))
-app_db = os.path.join(app_root, "imgopt.db")
+
 cfg_defaults = {
-    "jpegoptim" :   "/usr/bin/jpegoptim",
-    "optipng"   :   "/usr/bin/optipng",
-    "log"       :   "stderr",
-    "threads"   :   8,
+    "jpegoptim"     :   "/usr/bin/jpegoptim",
+    "optipng"       :   "/usr/bin/optipng",
+    "optipng_opts"  :   "-o5 -preserve",
+    "jpegoptim_opts":   "",
+    "log"           :   "stderr",
+    "threads"       :   8,
+    "hashdb"        :   os.path.join(app_root, "imgopt.db"),
+    "buffsize"      :   8 * 2**20,
 }
 
-ext_format = {
-    "jpg"   :   "jpeg",
-    "jpeg"  :   "jpeg",
-    "jpe"   :   "jpeg",
-    "jfif"  :   "jpeg",
-    "jif"   :   "jpeg",
-    "png"   :   "png",
-}
+class HashDB(object):
+    def __init__(self, dbfile):
+        self._dbfile = dbfile
+        self._hashes = dict()
 
-threads = cfg_defaults["threads"]
-thread_sem = threading.BoundedSemaphore(threads)
+    def dump():
+        pass
 
 def prepare_logfile(logname):
     if logname == "stdout":
@@ -42,68 +40,115 @@ def prepare_logfile(logname):
     else:
         return open(logname, "a")
 
-def setup_logger(logfile):
-    logger = logging.getLogger("imgopt")
-    logger.setLevel(logging.INFO)
+def setup_logger(logfile, name, level=logging.INFO):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
     log_handler = logging.StreamHandler(logfile)
     log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(log_handler)
     return logger
 
-def hash_file(filename):
-    with open(filename, "rb") as f:
-        H = hashlib.sha1()
-        while True:
-            data = f.read(BUFFSIZE)
-            if not data:
-                break
-            H.update(data)
-    log.debug("SHA1(%s) = %s", repr(filename), H.hexdigest())
-    return H.digest()
+class ImageHandler(object):
+    supported_extensions = []
 
-def process_image_threaded(img_file, callback):
-    h = hash_file(img_file)
-    oldsize = os.stat(img_file).st_size 
-    callback(oldsize,0)
-    thread_sem.release()
+    def __init__(self, binary_path, options):
+        self._callargs = [ binary_path ]
+        self._callargs.extend(options)
 
-def process_image(*args):
-    thread_sem.acquire()
-    t = threading.Thread(target = process_image_threaded, args = args)
-    t.start()
+    def handle(self, path):
+        args = list(self._callargs)
+        args.append(path)
+        s = subprocess.Popen(args, close_fds = True)
+        s.wait()
+        return s.returncode == 0
 
-def optimize_imagedir(path):
-    results = {
-        "oldsize": 0,
-        "newsize": 0,
-        "count":   0,
-    }
-    reslock = threading.Lock()
-    log.info("Processing directory \"%s\"...", path)
-    def cb(before, after):
-        with reslock:
-            results["oldsize"] += before
-            results["newsize"] += after
-            results["count"] += 1
-    for dp, dn, fn in os.walk(path):
-        for filename in fn:
-            if os.path.splitext(filename)[1][1:].lower() in ext_format:
-                #try:
-                process_image(os.path.join(dp, filename), cb)
-                #except KeyboardInterrupt:
-                #    sys.exit(1)
-                #except:
-                #    pass
-    for i in xrange(threads):
-        thread_sem.acquire()
-    for i in xrange(threads):
-        thread_sem.release()
-    return results["oldsize"], results["newsize"], results["count"]
+class JpegoptimHandler(ImageHandler):
+    supported_extensions = ("jpg", "jpeg", "jpe", "jfif", "jif")
+
+class OptipngHandler(ImageHandler):
+    supported_extensions = ("png",)
+
+class OptimizerRouter(object):
+    def __init__(self):
+        self._routes = dict()
+
+    def add_handler(self, handler):
+        for ext in handler.supported_extensions:
+            self._routes[ext] = handler
+
+    def _extract_type(self, path):
+        return os.path.splitext(path)[1][1:].lower()
+
+    def handle(self, path):
+        ext = self._extract_type(path)
+        if ext in self._routes:
+            self._routes[ext].handle(path)
+
+    def known(self, path):
+        return self._extract_type(path) in self._routes
+
+class ImageOptimizer(object):
+    def __init__(self, threads, router, hashdb, logger=None, buffsize=4096):
+        if logger is None:
+            self._logger = setup_logger(sys.stderr, "ImageOptimizer", logging.INFO)
+        else:
+            self._logger = logger
+        self._threads = threads
+        self._thread_sem = threading.BoundedSemaphore(self._threads)
+        self._buffsize = buffsize
+        self._hashdb = hashdb
+        self._router = router
+
+    def hash_file(self, filename):
+        with open(filename, "rb") as f:
+            H = hashlib.sha1()
+            while True:
+                data = f.read(self._buffsize)
+                if not data:
+                    break
+                H.update(data)
+        self._logger.debug("SHA1(%s) = %s", repr(filename), H.hexdigest())
+        return H.digest()
+
+    def __process_image_threaded(self, img_file, callback):
+        try:
+            h = self.hash_file(img_file)
+            oldsize = os.stat(img_file).st_size 
+            callback(oldsize, 0)
+        except Exception as e:
+            self._logger.error(e)
+        finally:
+            self._thread_sem.release()
+
+    def __process_image(self, img_file, callback):
+        self._thread_sem.acquire()
+        t = threading.Thread(target = self.__process_image_threaded, args = (img_file, callback))
+        t.start()
+
+    def optimize_dir(self, path):
+        results = {
+            "oldsize": 0,
+            "newsize": 0,
+            "count":   0,
+        }
+        reslock = threading.Lock()
+        self._logger.info("Processing directory \"%s\"...", path)
+        def cb(before, after):
+            with reslock:
+                results["oldsize"] += before
+                results["newsize"] += after
+                results["count"] += 1
+        for dp, dn, fn in os.walk(path):
+            for filename in fn:
+                if self._router.known(filename):
+                    self.__process_image(os.path.join(dp, filename), cb)
+        for i in xrange(self._threads):
+            self._thread_sem.acquire()
+        for i in xrange(self._threads):
+            self._thread_sem.release()
+        return results["oldsize"], results["newsize"], results["count"]
 
 def main():
-    global log
-    global threads
-    global thread_sem
     cfgpath = os.path.join(app_root, "imgopt.ini")
 
     config = ConfigParser.RawConfigParser(cfg_defaults)
@@ -111,11 +156,26 @@ def main():
     assert configs, "No config files read"
     sections = [ s for s in config.sections() if s != GLOBAL ]
 
-    log = setup_logger(prepare_logfile(config.get(GLOBAL, "log")))
-    log.info("Starting")
-    threads = config.getint(GLOBAL, "threads")
-    thread_sem = threading.BoundedSemaphore(threads)
+    log = setup_logger(prepare_logfile(config.get(GLOBAL, "log")), "imgopt", logging.INFO)
 
+    hashdb = HashDB(config.get(GLOBAL, "hashdb"))
+    
+    optimizer_router = OptimizerRouter()
+    optimizer_router.add_handler(
+        JpegoptimHandler(
+            config.get(GLOBAL, "jpegoptim"),
+            config.get(GLOBAL, "jpegoptim_opts").split()
+        )
+    )
+    optimizer_router.add_handler(
+        OptipngHandler(
+            config.get(GLOBAL, "optipng"),
+            config.get(GLOBAL, "optipng_opts").split()
+        )
+    )
+    optimizer = ImageOptimizer(config.getint(GLOBAL, "threads"), optimizer_router, hashdb, log, config.getint(GLOBAL, "buffsize"))
+
+    log.info("Starting")
     report = dict()
     for sect in sections:
         try:
@@ -127,7 +187,7 @@ def main():
         if not os.path.isdir(path):
             log.warn("Config section \"%s\": \"path\" value %s doesn`t points to a directory! Skipping...", sect, repr(path))
             continue
-        oldsize, newsize, count = optimize_imagedir(path)
+        oldsize, newsize, count = optimizer.optimize_dir(path)
         report[sect] = {
             "path": path,
             "count": count,
