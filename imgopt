@@ -4,12 +4,17 @@ import sys
 import ConfigParser
 import os
 import os.path
+import threading
 import subprocess
 import logging
+import hashlib
 import json
+import sqlite3 as lite
 
 GLOBAL = "global"
+BUFFSIZE = 8 * 2**20
 app_root = os.path.dirname(os.path.realpath(__file__))
+app_db = os.path.join(app_root, "imgopt.db")
 cfg_defaults = {
     "jpegoptim" :   "/usr/bin/jpegoptim",
     "optipng"   :   "/usr/bin/optipng",
@@ -27,6 +32,8 @@ ext_format = {
 }
 
 threads = cfg_defaults["threads"]
+thread_sem = threading.BoundedSemaphore(threads)
+children = list()
 
 def prepare_logfile(logname):
     if logname == "stdout":
@@ -44,25 +51,61 @@ def setup_logger(logfile):
     logger.addHandler(log_handler)
     return logger
 
-def process_image(img_file):
-    log.debug("Processing %s", repr(img_file))
-    return 0, 0
+def hash_file(filename):
+    with open(filename, "rb") as f:
+        H = hashlib.sha1()
+        while True:
+            data = f.read(BUFFSIZE)
+            if not data:
+                break
+            H.update(data)
+    log.debug("SHA1(%s) = %s", repr(filename), H.hexdigest())
+    return H.digest()
+
+def process_image_threaded(img_file, callback):
+    h = hash_file(img_file)
+    oldsize = os.stat(img_file).st_size 
+    callback(oldsize,0)
+    thread_sem.release()
+
+def process_image(*args):
+    global children
+    children = [ child for child in children if child.is_alive() ]
+    thread_sem.acquire()
+    t = threading.Thread(target = process_image_threaded, args = args)
+    t.start()
+    children.append(t)
 
 def optimize_imagedir(path):
-    oldsize, newsize, count = 0, 0, 0
+    results = {
+        "oldsize": 0,
+        "newsize": 0,
+        "count":   0,
+    }
     log.info("Processing directory \"%s\"...", path)
+    def cb(before, after):
+        results["oldsize"] += before
+        results["newsize"] += after
+        results["count"] += 1
     for dp, dn, fn in os.walk(path):
         for filename in fn:
             if os.path.splitext(filename)[1][1:].lower() in ext_format:
-                size_before, size_after = process_image(os.path.join(dp, filename))
-                oldsize += size_before
-                newsize += size_after
-                count += 1
-    return oldsize, newsize, count
+                #try:
+                process_image(os.path.join(dp, filename), cb)
+                #except KeyboardInterrupt:
+                #    sys.exit(1)
+                #except:
+                #    pass
+    for i in xrange(threads):
+        thread_sem.acquire()
+    for i in xrange(threads):
+        thread_sem.release()
+    return results["oldsize"], results["newsize"], results["count"]
 
 def main():
     global log
     global threads
+    global thread_sem
     cfgpath = os.path.join(app_root, "imgopt.ini")
 
     config = ConfigParser.RawConfigParser(cfg_defaults)
@@ -73,6 +116,7 @@ def main():
     log = setup_logger(prepare_logfile(config.get(GLOBAL, "log")))
     log.info("Starting")
     threads = config.getint(GLOBAL, "threads")
+    thread_sem = threading.BoundedSemaphore(threads)
 
     report = dict()
     for sect in sections:
