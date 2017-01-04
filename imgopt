@@ -38,7 +38,7 @@ class HashDB(object):
     def dump(self):
         tmpfile = self._dbfile + ".tmp"
         with open(tmpfile, "wb") as f:
-            cPickle.dump(a, f, cPickle.HIGHEST_PROTOCOL)
+            cPickle.dump(self._hashes, f, cPickle.HIGHEST_PROTOCOL)
         os.rename(tmpfile, self._dbfile)
 
     def __setitem__(self, key, value):
