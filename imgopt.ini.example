@@ -1,0 +1,9 @@
+[global]
+jpegoptim = /usr/bin/jpegoptim
+jpegoptim_opts = -m92
+optipng = /usr/bin/optipng
+threads = 24
+
+[image_repo]
+path = /var/images
+
