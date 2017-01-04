@@ -11,6 +11,7 @@ import hashlib
 import json
 import cPickle
 import atexit
+import signal
 
 GLOBAL = "global"
 app_root = os.path.dirname(os.path.realpath(__file__))
@@ -186,6 +187,9 @@ class ImageOptimizer(object):
             self._thread_sem.release()
         return results["oldsize"], results["newsize"], results["count"]
 
+def sighandler(signal, frame):
+    sys.exit(1)
+
 def main():
     cfgpath = os.path.join(app_root, "imgopt.ini")
 
@@ -199,6 +203,7 @@ def main():
     log.info("Reading hash DB...")
     hashdb = HashDB(config.get(GLOBAL, "hashdb"))
     atexit.register(hashdb.dump)
+    signal.signal(signal.SIGTERM, sighandler)
 
     log.info("Constructing objects...")
     
