@@ -10,12 +10,10 @@ import logging
 import hashlib
 import json
 import cPickle
+import atexit
 
 GLOBAL = "global"
 app_root = os.path.dirname(os.path.realpath(__file__))
-
-WNULL = open(os.devnull, 'w')
-RNULL = open(os.devnull, 'r')
 
 cfg_defaults = {
     "jpegoptim"     :   "/usr/bin/jpegoptim",
@@ -84,8 +82,9 @@ class ImageHandler(object):
     def handle(self, path):
         args = list(self._callargs)
         args.append(path)
-        s = subprocess.Popen(args, stdin=RNULL, stdout=WNULL, stderr=subprocess.STDOUT)
-        s.wait()
+        with open(os.devnull, 'w') as out, open(os.devnull, 'r') as inp:
+            s = subprocess.Popen(args, stdin=inp, stdout=out, stderr=out)
+            s.wait()
         return s.returncode == 0
 
 class JpegoptimHandler(ImageHandler):
@@ -199,6 +198,7 @@ def main():
 
     log.info("Reading hash DB...")
     hashdb = HashDB(config.get(GLOBAL, "hashdb"))
+    atexit.register(hashdb.dump)
 
     log.info("Constructing objects...")
     
@@ -239,7 +239,6 @@ def main():
 
     log.info("Finished.")
     log.info("Saving hash DB...")
-    hashdb.dump()
     json.dump(report, sys.stdout)
 
 if __name__ == '__main__':
