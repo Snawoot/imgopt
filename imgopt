@@ -23,6 +23,7 @@ cfg_defaults = {
     "optipng_opts"  :   "-o5 -preserve",
     "jpegoptim_opts":   "",
     "log"           :   "stderr",
+    "out"           :   "stdout",
     "threads"       :   8,
     "hashdb"        :   os.path.join(app_root, "imgopt.db"),
     "buffsize"      :   8 * 2**20,
@@ -58,13 +59,13 @@ class HashDB(object):
     def __contains__(self, key):
         return key in self._hashes
 
-def prepare_logfile(logname):
+def prepare_logfile(logname, append=True):
     if logname == "stdout":
         return sys.stdout
     elif logname == "stderr":
         return sys.stderr
     else:
-        return open(logname, "a")
+        return open(logname, "a" if append else "w")
 
 def setup_logger(logfile, name, level=logging.INFO):
     logger = logging.getLogger(name)
@@ -279,7 +280,7 @@ def main():
 
     log.info("Finished.")
     log.info("Saving hash DB...")
-    json.dump(report, sys.stdout)
+    json.dump(report, prepare_logfile(config.get(GLOBAL, "out"), False))
 
 if __name__ == '__main__':
     main()
