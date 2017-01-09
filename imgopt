@@ -12,6 +12,7 @@ import json
 import cPickle
 import atexit
 import signal
+import tempfile
 
 GLOBAL = "global"
 app_root = os.path.dirname(os.path.realpath(__file__))
@@ -23,7 +24,7 @@ cfg_defaults = {
     "optipng_opts"  :   "-o5 -preserve",
     "jpegoptim_opts":   "",
     "log"           :   "stderr",
-    "out"           :   "stdout",
+    "statsfile"     :   "",
     "threads"       :   8,
     "hashdb"        :   os.path.join(app_root, "imgopt.db"),
     "buffsize"      :   8 * 2**20,
@@ -280,7 +281,23 @@ def main():
 
     log.info("Finished.")
     log.info("Saving hash DB...")
-    json.dump(report, prepare_logfile(config.get(GLOBAL, "out"), False))
+    json.dump(report, sys.stdout)
+    statsfile = config.get(GLOBAL, "statsfile")
+    if statsfile:
+        if os.path.isfile(statsfile):
+            with open(statsfile, "rb") as sf:
+                stats = json.load(sf)
+            stats.update(report)
+            statsrealpath = os.path.realpath(statsfile)
+            tmpfiledir = os.path.dirname(statsrealpath)
+            tmpfilepfx = os.path.basename(statsrealpath)
+            with tempfile.NamedTemporaryFile(prefix=tmpfilepfx, dir=tmpfiledir, delete=False) as sft:
+                json.dump(stats, sft)
+                tmpfilename = sft.name
+            os.rename(tmpfilename, statsfile)
+        else:
+            with open(statsfile, "wb") as sf:
+                json.dump(report, sf)
 
 if __name__ == '__main__':
     main()
