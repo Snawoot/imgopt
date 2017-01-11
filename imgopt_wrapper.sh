@@ -1,5 +1,5 @@
 #!/bin/bash
-approot=$(dirname "$(readlink -f "$0")")
+approot="$(dirname "$(readlink -f "$0")")"
 pidfile=/var/tmp/imgopt.pid
 
 (
@@ -9,7 +9,7 @@ pidfile=/var/tmp/imgopt.pid
     }
     >&2 echo "starting imgopt..."
     (
-        "$approot"/imgopt "$@" </dev/null >/dev/null 2>&1 &
+        "$approot"/imgopt "$@" &
         imgoptpid=$!
         echo $imgoptpid > "$pidfile"
         wait $imgoptpid
