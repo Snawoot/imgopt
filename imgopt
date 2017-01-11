@@ -13,6 +13,7 @@ import cPickle
 import atexit
 import signal
 import tempfile
+import stat
 
 GLOBAL = "global"
 app_root = os.path.dirname(os.path.realpath(__file__))
@@ -294,6 +295,7 @@ def main():
             with tempfile.NamedTemporaryFile(prefix=tmpfilepfx, dir=tmpfiledir, delete=False) as sft:
                 json.dump(stats, sft)
                 tmpfilename = sft.name
+            os.chmod(tmpfilename, os.stat(tmpfilename).st_mode | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH )
             os.rename(tmpfilename, statsfile)
         else:
             with open(statsfile, "wb") as sf:
