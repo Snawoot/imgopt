@@ -14,7 +14,7 @@ case $op in
         [ -f "$pidfile" -a -s "$pidfile" ] && {
             cat /proc/"$(cat "$pidfile")"/cmdline | tr '\0' ' '
             echo
-        } || >&2 echo "imgopt is not running"
+        } || echo "imgopt is not running"
     ;;
     *)
         (
